@@ -143,14 +143,14 @@ export async function startStream(rtspUrl: string): Promise<void> {
     "yuv420p",
     /* Um keyframe por segmento — evita cortes inválidos e saltos no player. */
     "-force_key_frames",
-    "expr:gte(t,n_forced*2)",
+    "expr:gte(t,n_forced*1)",
     "-f",
     "hls",
     "-hls_time",
-    "2",
+    "1",
     /* Janela larga: com delete_segments, lista curta apagava .ts antes do browser pedir → buracos de ~10s. */
     "-hls_list_size",
-    "20",
+    "6",
     "-hls_flags",
     "delete_segments+append_list+omit_endlist",
     "-hls_segment_filename",

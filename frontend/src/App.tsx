@@ -6,27 +6,28 @@ import './App.css'
 const PLAYLIST = '/hls/stream.m3u8'
 
 /**
- * HLS live (FFmpeg, não LL-HLS): `lowLatencyMode` false.
- * Equilíbrio: perto da borda ao vivo sem underrun (buffer minúsculo + lista curta no
- * servidor causava ciclo: ~10s a tocar → segmentos 404 / buffer vazio → ~10s a recuperar).
+ * Perfil agressivo para mínima latência possível em HLS clássico (FFmpeg).
+ * Pode exigir rede estável; se engasgar, aumentar liveSyncDurationCount para 2.
  */
 const HLS_PLAYER_CONFIG: Partial<Hls['config']> = {
   enableWorker: true,
   lowLatencyMode: false,
-  liveSyncMode: 'buffered',
-  liveSyncDurationCount: 3,
-  liveMaxLatencyDurationCount: 10,
-  maxLiveSyncPlaybackRate: 1.35,
-  maxBufferLength: 22,
-  maxMaxBufferLength: 50,
-  maxBufferHole: 0.5,
-  maxFragLookUpTolerance: 0.35,
-  nudgeMaxRetry: 10,
-  backBufferLength: 45,
+  liveSyncMode: 'edge',
+  liveSyncDurationCount: 1,
+  liveMaxLatencyDurationCount: 3,
+  maxLiveSyncPlaybackRate: 1.5,
+  maxBufferLength: 6,
+  maxMaxBufferLength: 12,
+  maxBufferHole: 0.2,
+  maxFragLookUpTolerance: 0.1,
+  nudgeMaxRetry: 12,
+  backBufferLength: 10,
   liveDurationInfinity: true,
-  initialLiveManifestSize: 2,
+  initialLiveManifestSize: 1,
 }
 
+const LIVE_CATCHUP_TARGET_LATENCY_S = 2.0
+const LIVE_HARD_SYNC_LATENCY_S = 4.0
 const ATTEMPT_TIMEOUT_MS = 45_000
 
 type OnvifStreamRow = {
@@ -115,6 +116,21 @@ function App() {
             return
           }
           onFatalHls(data)
+        })
+
+        hls.on(Hls.Events.FRAG_CHANGED, () => {
+          const latency = hls.latency ?? 0
+          const liveSyncPosition = hls.liveSyncPosition
+          if (latency > LIVE_HARD_SYNC_LATENCY_S && liveSyncPosition != null) {
+            video.currentTime = liveSyncPosition
+            video.playbackRate = 1
+            return
+          }
+          if (latency > LIVE_CATCHUP_TARGET_LATENCY_S) {
+            video.playbackRate = 1.2
+          } else {
+            video.playbackRate = 1
+          }
         })
 
         hls.loadSource(PLAYLIST)
