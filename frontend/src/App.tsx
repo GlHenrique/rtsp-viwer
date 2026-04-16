@@ -43,6 +43,7 @@ function App() {
   const startCancelRef = useRef(false)
   const startAbortRef = useRef<AbortController | null>(null)
   const [url, setUrl] = useState('')
+  const [rtspUrlHidden, setRtspUrlHidden] = useState(false)
   const [running, setRunning] = useState(false)
   /** `none`: sem `<video>`; `loading`: montado mas fora do ecrã até o HLS estar pronto; `ready`: visível. */
   const [playerPhase, setPlayerPhase] = useState<'none' | 'loading' | 'ready'>(
@@ -258,7 +259,10 @@ function App() {
     const row =
       onvifStreams.find((s) => s.profileToken === onvifPickToken) ??
       onvifStreams[0]
-    if (row) setUrl(row.rtspUrl)
+    if (row) {
+      setUrl(row.rtspUrl)
+      setRtspUrlHidden(true)
+    }
   }, [onvifStreams, onvifPickToken])
 
   const handleOnvifFetch = async () => {
@@ -335,9 +339,16 @@ function App() {
               name="rtsp"
               autoComplete="off"
               spellCheck={false}
-              placeholder="rtsp://utilizador:password@192.168.1.100:554/stream"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              placeholder={
+                rtspUrlHidden
+                  ? 'URL RTSP preenchida via ONVIF (oculta)'
+                  : 'rtsp://utilizador:password@192.168.1.100:554/stream'
+              }
+              value={rtspUrlHidden ? '' : url}
+              onChange={(e) => {
+                setUrl(e.target.value)
+                setRtspUrlHidden(false)
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !running && !loading) {
                   e.preventDefault()
