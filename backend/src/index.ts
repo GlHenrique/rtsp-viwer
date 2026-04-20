@@ -1,13 +1,15 @@
 import { config as loadEnv } from "dotenv";
 import cors from "cors";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
+  captureSnapshot,
   getHlsDirectory,
   getPlaylistPath,
   getStatus,
+  resolveRtspUrl,
   startStream,
   stopStream,
 } from "./streamManager.js";
@@ -95,6 +97,35 @@ app.post("/api/stream/stop", (_req, res) => {
   stopStream();
   res.json({ ok: true });
 });
+
+async function snapshotHandler(req: Request, res: Response): Promise<void> {
+  const explicit =
+    (typeof req.body?.url === "string" ? req.body.url.trim() : "") ||
+    (typeof req.query?.url === "string" ? String(req.query.url).trim() : "");
+  const url = resolveRtspUrl(explicit || null);
+
+  if (!url) {
+    res.status(400).json({
+      error:
+        'Indique a URL RTSP em ?url= ou no corpo { "url": "..." }, ou defina RTSP_URL / inicie o stream com POST /api/stream/start.',
+    });
+    return;
+  }
+
+  try {
+    const { buffer, relativePath } = await captureSnapshot(url);
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Snapshot-Path", relativePath);
+    res.send(buffer);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(502).json({ error: message });
+  }
+}
+
+app.get("/api/snapshot", snapshotHandler);
+app.post("/api/snapshot", snapshotHandler);
 
 app.post("/api/onvif/rtsp-streams", async (req, res) => {
   const hostname =

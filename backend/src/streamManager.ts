@@ -1,20 +1,27 @@
 import { spawn, type ChildProcess } from "child_process";
 import { existsSync } from "fs";
-import { mkdir, readdir, readFile, unlink } from "fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Pasta estável: mesmo que o servidor seja arrancado noutra pasta de trabalho. */
 const HLS_DIR = join(__dirname, "..", "hls-cache");
+const SNAPSHOTS_DIR = join(__dirname, "..", "snapshots");
 
 export function getHlsDirectory(): string {
   return HLS_DIR;
+}
+
+export function getSnapshotsDirectory(): string {
+  return SNAPSHOTS_DIR;
 }
 const PLAYLIST_NAME = "stream.m3u8";
 
 let ffmpeg: ChildProcess | null = null;
 let lastError: string | null = null;
+/** Última URL RTSP com que o HLS arrancou com sucesso (para snapshot sem repetir URL). */
+let lastSuccessfulRtspUrl: string | null = null;
 
 export function getPlaylistPath(): string {
   return `/hls/${PLAYLIST_NAME}`;
@@ -26,6 +33,121 @@ export function getStatus() {
     lastError,
     playlistPath: getPlaylistPath(),
   };
+}
+
+/** Corpo `{ url }`, última URL de stream bem-sucedido, ou `RTSP_URL` no `.env`. */
+export function resolveRtspUrl(bodyUrl?: string | null): string | null {
+  const trimmed = typeof bodyUrl === "string" ? bodyUrl.trim() : "";
+  if (trimmed) return trimmed;
+  if (lastSuccessfulRtspUrl) return lastSuccessfulRtspUrl;
+  const envUrl = (process.env.RTSP_URL ?? "").trim();
+  return envUrl || null;
+}
+
+async function ensureSnapshotsDir(): Promise<void> {
+  await mkdir(SNAPSHOTS_DIR, { recursive: true });
+}
+
+/**
+ * Captura um frame JPEG atual do RTSP (processo FFmpeg separado do HLS),
+ * grava em `snapshots/` e devolve o buffer para a resposta HTTP.
+ */
+export async function captureSnapshot(
+  rtspUrl: string
+): Promise<{ buffer: Buffer; fileName: string; relativePath: string }> {
+  const trimmed = rtspUrl.trim();
+  if (!trimmed.toLowerCase().startsWith("rtsp://")) {
+    throw new Error("URL deve começar com rtsp://");
+  }
+
+  const timeoutRaw = Number(process.env.SNAPSHOT_TIMEOUT_MS);
+  const timeoutMs =
+    Number.isFinite(timeoutRaw) && timeoutRaw > 0
+      ? Math.floor(timeoutRaw)
+      : 30_000;
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const stderrLines: string[] = [];
+
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-rtsp_transport",
+      "tcp",
+      "-i",
+      trimmed,
+      "-an",
+      "-frames:v",
+      "1",
+      "-f",
+      "image2pipe",
+      "-vcodec",
+      "mjpeg",
+      "-",
+    ];
+
+    const child = spawn("ffmpeg", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* ignore */
+      }
+      reject(new Error("Tempo esgotado ao capturar snapshot."));
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const line = chunk.toString().trim();
+      if (line) stderrLines.push(line);
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const out = Buffer.concat(chunks);
+      if (code === 0 && out.length > 0) {
+        resolve(out);
+        return;
+      }
+      const hint =
+        stderrLines.length > 0
+          ? stderrLines[stderrLines.length - 1]
+          : `código ${String(code)}`;
+      reject(
+        new Error(
+          code === 0 && out.length === 0
+            ? "FFmpeg não devolveu imagem (saída vazia)."
+            : `Falha ao capturar snapshot: ${hint}`
+        )
+      );
+    });
+  });
+
+  await ensureSnapshotsDir();
+  const d = new Date();
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const fileName = `snapshot-${y}-${mo}-${day}.jpg`;
+  const fsPath = join(SNAPSHOTS_DIR, fileName);
+  await writeFile(fsPath, buffer);
+  const relativePath = join("snapshots", fileName).replace(/\\/g, "/");
+
+  return { buffer, fileName, relativePath };
 }
 
 async function ensureHlsDir(): Promise<void> {
@@ -209,6 +331,7 @@ export async function startStream(rtspUrl: string): Promise<void> {
     });
 
     await waitForPlaylistReady(join(HLS_DIR, PLAYLIST_NAME), child, readyTimeoutMs);
+    lastSuccessfulRtspUrl = trimmed;
   } catch (e) {
     killFfmpeg();
     throw e;
