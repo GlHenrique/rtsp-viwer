@@ -107,7 +107,7 @@ async function snapshotHandler(req: Request, res: Response): Promise<void> {
   if (!url) {
     res.status(400).json({
       error:
-        'Indique a URL RTSP em ?url= ou no corpo { "url": "..." }, ou defina RTSP_URL / inicie o stream com POST /api/stream/start.',
+        'Indique a URL RTSP em ?url= ou no corpo { "url": "..." }, ou defina RTSP_URL. Depois do primeiro stream ou snapshot com URL, pode omitir.',
     });
     return;
   }

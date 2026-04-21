@@ -20,8 +20,8 @@ const PLAYLIST_NAME = "stream.m3u8";
 
 let ffmpeg: ChildProcess | null = null;
 let lastError: string | null = null;
-/** Última URL RTSP com que o HLS arrancou com sucesso (para snapshot sem repetir URL). */
-let lastSuccessfulRtspUrl: string | null = null;
+/** Última URL RTSP conhecida (stream iniciado ou snapshot); não exige HLS pronto. */
+let lastRtspUrl: string | null = null;
 
 export function getPlaylistPath(): string {
   return `/hls/${PLAYLIST_NAME}`;
@@ -35,11 +35,11 @@ export function getStatus() {
   };
 }
 
-/** Corpo `{ url }`, última URL de stream bem-sucedido, ou `RTSP_URL` no `.env`. */
+/** Corpo/query `{ url }`, última URL usada em stream/snapshot, ou `RTSP_URL` no `.env`. */
 export function resolveRtspUrl(bodyUrl?: string | null): string | null {
   const trimmed = typeof bodyUrl === "string" ? bodyUrl.trim() : "";
   if (trimmed) return trimmed;
-  if (lastSuccessfulRtspUrl) return lastSuccessfulRtspUrl;
+  if (lastRtspUrl) return lastRtspUrl;
   const envUrl = (process.env.RTSP_URL ?? "").trim();
   return envUrl || null;
 }
@@ -59,6 +59,8 @@ export async function captureSnapshot(
   if (!trimmed.toLowerCase().startsWith("rtsp://")) {
     throw new Error("URL deve começar com rtsp://");
   }
+
+  lastRtspUrl = trimmed;
 
   const timeoutRaw = Number(process.env.SNAPSHOT_TIMEOUT_MS);
   const timeoutMs =
@@ -223,6 +225,8 @@ export async function startStream(rtspUrl: string): Promise<void> {
     throw new Error("URL deve começar com rtsp://");
   }
 
+  lastRtspUrl = trimmed;
+
   const readyTimeoutRaw = Number(process.env.HLS_READY_TIMEOUT_MS);
   const readyTimeoutMs =
     Number.isFinite(readyTimeoutRaw) && readyTimeoutRaw > 0
@@ -331,7 +335,6 @@ export async function startStream(rtspUrl: string): Promise<void> {
     });
 
     await waitForPlaylistReady(join(HLS_DIR, PLAYLIST_NAME), child, readyTimeoutMs);
-    lastSuccessfulRtspUrl = trimmed;
   } catch (e) {
     killFfmpeg();
     throw e;
