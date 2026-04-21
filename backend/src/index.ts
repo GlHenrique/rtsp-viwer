@@ -4,6 +4,8 @@ import express, { type Request, type Response } from "express";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import swaggerUi from "swagger-ui-express";
+import { createOpenApiSpec } from "./openapi.js";
 import {
   captureSnapshot,
   getHlsDirectory,
@@ -23,6 +25,10 @@ const PORT = Number(process.env.PORT) || 3001;
 
 app.use(cors());
 app.use(express.json());
+
+const openApiSpec = createOpenApiSpec(PORT);
+
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
 const hlsDir = getHlsDirectory();
 
@@ -171,4 +177,5 @@ app.post("/api/onvif/rtsp-streams", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`API em http://localhost:${PORT}`);
   console.log(`HLS em http://localhost:${PORT}${getPlaylistPath()}`);
+  console.log(`Swagger em http://localhost:${PORT}/api/docs`);
 });
