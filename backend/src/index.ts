@@ -16,6 +16,18 @@ import {
   stopStream,
 } from "./streamManager.js";
 import { fetchOnvifRtspStreams } from "./onvifService.js";
+import {
+  configureBambuWebhook,
+  connectBambu,
+  connectBambuCloud,
+  disconnectBambu,
+  getBambuCloudDebugIdentity,
+  getBambuStatus,
+  getBambuCloudWhoAmI,
+  sendBambuCloudEmailCode,
+  startBambuCloudLogin,
+  verifyBambuCloudEmailCode,
+} from "./bambuService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: path.join(__dirname, "..", ".env") });
@@ -168,6 +180,187 @@ app.post("/api/onvif/rtsp-streams", async (req, res) => {
       ...(pathStr ? { path: pathStr } : {}),
     });
     res.json({ ok: true, streams });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.get("/api/bambu/status", (_req, res) => {
+  res.json(getBambuStatus());
+});
+
+app.post("/api/bambu/connect", async (req, res) => {
+  const host = typeof req.body?.host === "string" ? req.body.host.trim() : undefined;
+  const serial = typeof req.body?.serial === "string" ? req.body.serial.trim() : undefined;
+  const accessCode =
+    typeof req.body?.accessCode === "string" ? req.body.accessCode.trim() : undefined;
+  const username =
+    typeof req.body?.username === "string" ? req.body.username.trim() : undefined;
+  const protocol =
+    req.body?.protocol === "mqtt" || req.body?.protocol === "mqtts"
+      ? req.body.protocol
+      : undefined;
+  const port =
+    req.body?.port === undefined || req.body?.port === null || req.body?.port === ""
+      ? undefined
+      : Number(req.body.port);
+  const rejectUnauthorized =
+    typeof req.body?.rejectUnauthorized === "boolean"
+      ? req.body.rejectUnauthorized
+      : undefined;
+
+  try {
+    await connectBambu({
+      host,
+      serial,
+      accessCode,
+      username,
+      protocol,
+      ...(Number.isFinite(port) && port !== undefined && port > 0
+        ? { port: Math.trunc(port) }
+        : {}),
+      ...(rejectUnauthorized !== undefined ? { rejectUnauthorized } : {}),
+    });
+    res.json({ ok: true, status: getBambuStatus() });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post("/api/bambu/connect-cloud", async (req, res) => {
+  const token = typeof req.body?.token === "string" ? req.body.token.trim() : undefined;
+  const serial = typeof req.body?.serial === "string" ? req.body.serial.trim() : undefined;
+  const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : undefined;
+  const region = req.body?.region === "china" ? "china" : req.body?.region === "global" ? "global" : undefined;
+  const rejectUnauthorized =
+    typeof req.body?.rejectUnauthorized === "boolean"
+      ? req.body.rejectUnauthorized
+      : undefined;
+
+  try {
+    await connectBambuCloud({
+      token,
+      serial,
+      userId,
+      region,
+      ...(rejectUnauthorized !== undefined ? { rejectUnauthorized } : {}),
+    });
+    res.json({ ok: true, status: getBambuStatus() });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post("/api/bambu/disconnect", (_req, res) => {
+  disconnectBambu();
+  res.json({ ok: true, status: getBambuStatus() });
+});
+
+app.post("/api/bambu/webhook", (req, res) => {
+  const urlRaw = req.body?.url;
+  const enabledRaw = req.body?.enabled;
+  const url =
+    typeof urlRaw === "string" ? urlRaw.trim() : urlRaw === null ? null : undefined;
+  const enabled = typeof enabledRaw === "boolean" ? enabledRaw : undefined;
+
+  if (url !== undefined && url !== null) {
+    try {
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        res.status(400).json({ error: "Webhook URL deve usar http:// ou https://." });
+        return;
+      }
+    } catch {
+      res.status(400).json({ error: "Webhook URL inválida." });
+      return;
+    }
+  }
+
+  const configured = configureBambuWebhook({ url, enabled });
+  res.json({ ok: true, ...configured, status: getBambuStatus() });
+});
+
+app.post("/api/bambu/cloud-auth/start", async (req, res) => {
+  const account = typeof req.body?.account === "string" ? req.body.account.trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  const region = req.body?.region === "china" ? "china" : "global";
+  if (!account || !password) {
+    res.status(400).json({ error: "Informe account e password." });
+    return;
+  }
+
+  try {
+    const loginResult = await startBambuCloudLogin({ account, password, region });
+    if (loginResult.loginType === "verifyCode") {
+      await sendBambuCloudEmailCode({ account, region });
+      res.json({
+        ok: true,
+        loginType: "verifyCode",
+        message: "Código enviado por email. Use /api/bambu/cloud-auth/verify.",
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      loginType: "token",
+      accessToken: loginResult.accessToken,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post("/api/bambu/cloud-auth/verify", async (req, res) => {
+  const account = typeof req.body?.account === "string" ? req.body.account.trim() : "";
+  const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+  const region = req.body?.region === "china" ? "china" : "global";
+  if (!account || !code) {
+    res.status(400).json({ error: "Informe account e code." });
+    return;
+  }
+
+  try {
+    const result = await verifyBambuCloudEmailCode({ account, code, region });
+    res.json({ ok: true, accessToken: result.accessToken });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post("/api/bambu/cloud-auth/whoami", async (req, res) => {
+  const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+  const region = req.body?.region === "china" ? "china" : "global";
+  if (!token) {
+    res.status(400).json({ error: "Informe token." });
+    return;
+  }
+
+  try {
+    const result = await getBambuCloudWhoAmI({ token, region });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post("/api/bambu/cloud-auth/debug-identity", async (req, res) => {
+  const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+  const region = req.body?.region === "china" ? "china" : "global";
+  if (!token) {
+    res.status(400).json({ error: "Informe token." });
+    return;
+  }
+
+  try {
+    const result = await getBambuCloudDebugIdentity({ token, region });
+    res.json({ ok: true, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     res.status(400).json({ error: message });

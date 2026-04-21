@@ -13,6 +13,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.21.2",
+    "mqtt": "^5.15.1",
     "onvif": "^0.8.1",
     "swagger-ui-express": "^5.0.1"
   },
