@@ -24,6 +24,7 @@ import {
   getBambuCloudDebugIdentity,
   getBambuStatus,
   getBambuCloudWhoAmI,
+  onBambuLayerCompleted,
   sendBambuCloudEmailCode,
   startBambuCloudLogin,
   verifyBambuCloudEmailCode,
@@ -41,6 +42,39 @@ app.use(express.json());
 const openApiSpec = createOpenApiSpec(PORT);
 
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiSpec));
+
+const timelapseState: {
+  enabled: boolean;
+  rtspUrl: string | null;
+  lastSnapshotAt: string | null;
+  lastSnapshotPath: string | null;
+  lastError: string | null;
+} = {
+  enabled: false,
+  rtspUrl: null,
+  lastSnapshotAt: null,
+  lastSnapshotPath: null,
+  lastError: null,
+};
+
+onBambuLayerCompleted(async () => {
+  if (!timelapseState.enabled) return;
+  const url = resolveRtspUrl(timelapseState.rtspUrl);
+  if (!url) {
+    timelapseState.lastError =
+      'Sem URL RTSP para timelapse. Defina em /api/start-timelapse {"url":"..."} ou inicie stream/snapshot primeiro.';
+    return;
+  }
+  try {
+    const { relativePath } = await captureSnapshot(url);
+    timelapseState.lastSnapshotAt = new Date().toISOString();
+    timelapseState.lastSnapshotPath = relativePath;
+    timelapseState.lastError = null;
+  } catch (e) {
+    timelapseState.lastSnapshotAt = new Date().toISOString();
+    timelapseState.lastError = e instanceof Error ? e.message : String(e);
+  }
+});
 
 const hlsDir = getHlsDirectory();
 
@@ -144,6 +178,27 @@ async function snapshotHandler(req: Request, res: Response): Promise<void> {
 
 app.get("/api/snapshot", snapshotHandler);
 app.post("/api/snapshot", snapshotHandler);
+
+app.get("/api/timelapse/status", (_req, res) => {
+  res.json({ ...timelapseState });
+});
+
+app.post("/api/start-timelapse", (req, res) => {
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  if (url && !url.toLowerCase().startsWith("rtsp://")) {
+    res.status(400).json({ error: "URL do timelapse deve começar com rtsp://." });
+    return;
+  }
+  timelapseState.enabled = true;
+  timelapseState.rtspUrl = url || timelapseState.rtspUrl;
+  timelapseState.lastError = null;
+  res.json({ ok: true, ...timelapseState });
+});
+
+app.post("/api/stop-timelapse", (_req, res) => {
+  timelapseState.enabled = false;
+  res.json({ ok: true, ...timelapseState });
+});
 
 app.post("/api/onvif/rtsp-streams", async (req, res) => {
   const hostname =

@@ -76,6 +76,27 @@ export function createOpenApiSpec(port: number) {
             },
           },
         },
+        TimelapseStartRequest: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "URL RTSP opcional para snapshots de timelapse",
+              example: "rtsp://admin:admin@192.168.1.10:554/stream1",
+            },
+          },
+        },
+        TimelapseStatus: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean", example: true },
+            rtspUrl: { type: "string", nullable: true },
+            lastSnapshotAt: { type: "string", format: "date-time", nullable: true },
+            lastSnapshotPath: { type: "string", nullable: true, example: "snapshots/snapshot-2026-04-21.jpg" },
+            lastError: { type: "string", nullable: true },
+          },
+          required: ["enabled", "rtspUrl", "lastSnapshotAt", "lastSnapshotPath", "lastError"],
+        },
         OnvifStreamsRequest: {
           type: "object",
           properties: {
@@ -416,6 +437,92 @@ export function createOpenApiSpec(port: number) {
               content: {
                 "application/json": {
                   schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/api/timelapse/status": {
+        get: {
+          tags: ["Snapshot"],
+          summary: "Consulta estado do timelapse por camada",
+          responses: {
+            200: {
+              description: "Estado atual do timelapse",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/TimelapseStatus" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/api/start-timelapse": {
+        post: {
+          tags: ["Snapshot"],
+          summary: "Ativa timelapse: snapshot a cada fim de camada",
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/TimelapseStartRequest" },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Timelapse iniciado",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean", example: true },
+                      enabled: { type: "boolean", example: true },
+                      rtspUrl: { type: "string", nullable: true },
+                      lastSnapshotAt: { type: "string", format: "date-time", nullable: true },
+                      lastSnapshotPath: { type: "string", nullable: true },
+                      lastError: { type: "string", nullable: true },
+                    },
+                    required: ["ok", "enabled", "rtspUrl", "lastSnapshotAt", "lastSnapshotPath", "lastError"],
+                  },
+                },
+              },
+            },
+            400: {
+              description: "URL RTSP inválida",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErrorResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/api/stop-timelapse": {
+        post: {
+          tags: ["Snapshot"],
+          summary: "Desativa timelapse por camada",
+          responses: {
+            200: {
+              description: "Timelapse parado",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean", example: true },
+                      enabled: { type: "boolean", example: false },
+                      rtspUrl: { type: "string", nullable: true },
+                      lastSnapshotAt: { type: "string", format: "date-time", nullable: true },
+                      lastSnapshotPath: { type: "string", nullable: true },
+                      lastError: { type: "string", nullable: true },
+                    },
+                    required: ["ok", "enabled", "rtspUrl", "lastSnapshotAt", "lastSnapshotPath", "lastError"],
+                  },
                 },
               },
             },

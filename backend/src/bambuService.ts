@@ -33,6 +33,15 @@ type LayerEvent = {
   at: string;
 };
 
+export type LayerCompletedEvent = {
+  layer: number;
+  previousLayer: number | null;
+  at: string;
+  totalLayers: number | null;
+  serial: string | null;
+  source: "local" | "cloud" | null;
+};
+
 type BambuState = {
   connected: boolean;
   connecting: boolean;
@@ -58,6 +67,7 @@ const MAX_RECENT_LAYER_EVENTS = 20;
 
 let client: MqttClient | null = null;
 let activeTopic: string | null = null;
+const layerCompletedListeners = new Set<(event: LayerCompletedEvent) => void | Promise<void>>();
 
 const state: BambuState = {
   connected: false,
@@ -152,14 +162,20 @@ function applyLayerUpdate(currentLayer: number | null, totalLayers: number | nul
     }
     state.lastLayer = currentLayer;
     state.lastLayerCompletedAt = now;
-    void fireLayerWebhook({
+    const event: LayerCompletedEvent = {
       layer: currentLayer,
       previousLayer,
       at: now,
       totalLayers: state.totalLayers,
       serial: state.serial,
       source: state.source,
-    });
+    };
+    void fireLayerWebhook(event);
+    for (const listener of layerCompletedListeners) {
+      void Promise.resolve(listener(event)).catch(() => {
+        // ignore listener errors to avoid breaking MQTT processing
+      });
+    }
     return;
   }
 
@@ -861,5 +877,14 @@ export function getBambuStatus(): BambuState {
   return {
     ...state,
     recentLayerEvents: [...state.recentLayerEvents],
+  };
+}
+
+export function onBambuLayerCompleted(
+  listener: (event: LayerCompletedEvent) => void | Promise<void>
+): () => void {
+  layerCompletedListeners.add(listener);
+  return () => {
+    layerCompletedListeners.delete(listener);
   };
 }
