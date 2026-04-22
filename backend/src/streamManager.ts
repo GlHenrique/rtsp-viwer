@@ -144,7 +144,10 @@ export async function captureSnapshot(
   const y = d.getFullYear();
   const mo = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  const fileName = `snapshot-${y}-${mo}-${day}.jpg`;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  const fileName = `snapshot-${y}-${mo}-${day}-${hh}-${mm}-${ss}.jpg`;
   const fsPath = join(SNAPSHOTS_DIR, fileName);
   await writeFile(fsPath, buffer);
   const relativePath = join("snapshots", fileName).replace(/\\/g, "/");
